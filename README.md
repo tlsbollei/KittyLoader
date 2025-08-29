@@ -1,3 +1,12 @@
+<p style="text-align:center;">
+  <em>« La force se cache dans l’invisible, et l’invisible gouverne tout. »</em>
+</p>
+
+<div style="text-align:center; margin-top:8px;">
+  <img src="asset/charles-chevalier.jpg"
+       alt="Charles Chevalier (Blue Lock)"
+       width="400">
+</div>
 
 # KittyLoader
 ### About
