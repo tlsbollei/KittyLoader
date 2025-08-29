@@ -37,7 +37,5 @@ KittyLoader is a highly evasive loader written in C / Assembly.
 ![Preview](https://pbs.twimg.com/media/FHe1LP-X0AoPxav?format=png&name=medium)
 
 ### Credits:
-- [@NinjaParanoid](https://twitter.com/NinjaParanoid): [PE Reflection: The King is Dead, Long Live the King](https://bruteratel.com/research/feature-update/2021/06/01/PE-Reflection-Long-Live-The-King/)
-- [@0xBoku](https://twitter.com/0xBoku): [User Defined Cobalt Strike Loader](https://github.com/boku7/CobaltStrikeReflectiveLoader)
-- [@ilove2pwn_](https://twitter.com/ilove2pwn_): [TitanLdr](https://github.com/SecIdiot/TitanLdr)
+- [@whokilleddb](https://x.com/whokilleddb): [Run shellcode using LdrCallEnclave](https://gist.github.com/whokilleddb/ef1f8c33947f6ceb90664ce38d3dcf04)
 - [trickster0](https://twitter.com/trickster012) [TartarusGate](https://github.com/trickster0/TartarusGate/) direct syscall method
