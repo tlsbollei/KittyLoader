@@ -46,7 +46,7 @@ KittyLoader is a highly evasive loader written in C / Assembly.
 - Execute via LdrCallEnclave, normally intended for SGX/VBS enclaves, instead of jumping to a secure enclave, we jump to an arbitrary function pointer in normal (VTL0) user memory.
 
 
-![Preview](https://pbs.twimg.com/media/FHe1LP-X0AoPxav?format=png&name=medium)
+<img src="asset/proof.PNG" alt="" width="950">
 
 ### Credits:
 - [@whokilleddb](https://x.com/whokilleddb): [Run shellcode using LdrCallEnclave](https://gist.github.com/whokilleddb/ef1f8c33947f6ceb90664ce38d3dcf04)
