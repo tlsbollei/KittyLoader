@@ -1,0 +1,22 @@
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+
+RUN powershell -Command \
+    Set-ExecutionPolicy Bypass -Scope Process -Force; \
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; \
+    iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+
+RUN choco install -y \
+    visualstudio2022buildtools \
+    visualstudio2022-workload-vctools \
+    cmake \
+    git \
+    --no-progress
+
+SHELL ["cmd", "/S", "/C"]
+RUN setx PATH "%PATH%;C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\bin\Hostx64\x64"
+
+WORKDIR /build
+
+COPY . .
+
+CMD ["scripts\\build.bat"]

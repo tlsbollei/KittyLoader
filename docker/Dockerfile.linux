@@ -1,0 +1,15 @@
+FROM ubuntu:22.04
+
+RUN apt-get update && apt-get install -y \
+    cmake \
+    make \
+    g++ \
+    mingw-w64 \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY . .
+
+CMD ["scripts/build.sh", "--tests"]
