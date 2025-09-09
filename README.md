@@ -9,6 +9,23 @@
 </div>
 
 # KittyLoader
+> [!CAUTION]
+> **Disclaimer & Legal Notice**  
+> This repository, **KittyLoader**, and all associated code, techniques, and information are provided strictly for **educational and academic research purposes**.  
+>
+> This sample and its methodologies have been **proactively disclosed to relevant cybersecurity defense organizations and vendors**. It is actively used by defensive engineers to research attack patterns, develop detection capabilities, and enhance security products.  
+>
+> You are required to use this knowledge and these tools **only on systems you own or have explicit, written permission to test**.  
+> Any unauthorized use against systems you do not own is **illegal and strictly prohibited**.  
+>
+> This tool was created to advance the field of defensive cybersecurity. The author, *tlsbollei*, assumes **no liability** and is not responsible for any misuse or damage caused by this software.  
+>
+> By accessing this repository, you acknowledge that you understand its purpose is to learn about **modern malware techniques, evasion tactics**, and ultimately to **improve our collective ability to defend against them**.
+
+
+By proceeding, you agree to use this information responsibly and legally.
+
+
 ### About
 KittyLoader is a highly evasive loader written in C / Assembly.
 
