@@ -9,6 +9,10 @@
 </div>
 
 # KittyLoader
+![GitHub Stars](https://img.shields.io/github/stars/tlsbollei/KittyLoader?style=social&logo=github)
+![GitHub Repo forks](https://img.shields.io/github/forks/tlsbollei/KittyLoader?style=social&logo=github)
+
+
 > [!CAUTION]
 > **Disclaimer & Legal Notice**  
 > This repository, **KittyLoader**, and all associated code, techniques, and information are provided strictly for **educational and academic research purposes**.  
