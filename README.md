@@ -51,17 +51,22 @@ KittyLoader is a highly evasive loader written in C / Assembly.
     - Avoids static imports by resolving function addresses at runtime.
     - Walks IMAGE_EXPORT_DIRECTORY and applies custom xor rotate hash algo.
     - APIs are initially attempted to be resolved via tprtdll.dll, which is quite the modern technique, it does so using GetModuleHandleW(L"tprtdll.dll") with DONT_RESOLVE_DLL_REFERENCES to minimize operation footprint.
- 
   
 - Embedded payload is encrypted at rest, with key and nonce derived at runtime from entropy sources: PID, TID, QPC, memory load, CPU info (CPUID), tick count.
 - Preferred algo is ChaCha20, but in case of failure falls back to RC4, decryption occurs in place after the encrypted blob is copied into memory.
 
-- Searches process memory via VirtualQuery for an already-executable region large enough for the shellcode.
-    - If none found, allocates new RW region with NtAllocateVirtualMemoryEx
-    - After decryption, if memory was RW, flips to RX with NtProtectVirtualMemory.
-    - Therefore, we intend to initially inject into pre-existing RWX memory page, but in case of failure, resort to custom resolved NtAllocateVirtualMemoryEx and flip RW-RX
+- Uses high-entropy randomness (PID/TID/GetTickCount/__rdtsc and more) to vary scan starts, delays, and sizes—reducing deterministic patterns and signature matches to cripple static.
+  
+- Searches for (RX/RWX/RW, non-guarded) and guards behind additional is_region_safe() heuristic, and does the following :
+    - Resolves sensitive APIs via stealthy, hash-based lookups instead of plain export walking—shrinks observable footprints and evades basic hooks
+    - Loads libraries with quiet flags (DONT_RESOLVE_DLL_REFERENCES, LOAD_LIBRARY_SEARCH_SYSTEM32) which minimizes I/O usage and loader footprint
 
-- Execute via LdrCallEnclave, normally intended for SGX/VBS enclaves, instead of jumping to a secure enclave, we jump to an arbitrary function pointer in normal (VTL0) user memory.
+- Writes and decrypts payload in scattered, variably sized chunks with micro-jitter—disrupts linear memory-write/decrypt heuristics and timing correlations
+    - Performs staged protection flips (RW → RWX → RX) and later restores RW before wipe/free—mimics legitimate behavior and lowers post-execution forensics   
+
+- Execute via LdrCallEnclave, normally intended for SGX/VBS enclaves, instead of jumping to a secure enclave, we jump to an arbitrary function pointer in normal (VTL0) user memory - latest version adds timing camouflage and a plausible execution context
+
+- Cleans up carefully (I-cache flush, SecureZeroMemory, free) with randomized post-execution timing—limits residue and timeline clustering
 
 
 <img src="asset/proof.PNG" alt="" width="950">
