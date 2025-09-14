@@ -63,7 +63,8 @@ KittyLoader is a highly evasive loader written in C / Assembly.
 
 - Cleans up carefully (I-cache flush, SecureZeroMemory, free) with randomized post-execution timing—limits residue and timeline clustering
 
-
+> [!NOTE]
+> To fix in the future -  ChaCha20 implementation bug, entry hijack ASM prologue/epilogue issues, control flow and compile hazards, and silence anti analysis more. Add fallbacks if LdrCallEnclave fails, and implement more stable key derivation. Or just fix it yourself!
 <img src="asset/proof.PNG" alt="" width="950">
 
 ### Credits:
