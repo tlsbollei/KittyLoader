@@ -42,19 +42,14 @@ KittyLoader is a highly evasive loader written in C / Assembly.
     - InMemoryOrderModuleList
       
 - Deploys a wide variety of anti-analysis techniques, including :
-    - multilayer scoring (debugger, sandbox/resources, API integrity/hook checks, human-input entropy, contextual cues like domain/time of day) combined into a weighted overall confidence that continuously re-evaluates
-    - picks an operational state (full → halted) and throttles/pauses with jittered, CPU-cycle-based delays in a loop that keeps reassessing the environment.
+    - Multilayer scoring (debugger, sandbox/resources, API integrity/hook checks, human-input entropy, contextual cues like domain/time of day) combined into a weighted overall confidence that continuously re-evaluates
+    - Picks an operational state (full → halted) and throttles/pauses with jittered, CPU-cycle-based delays in a loop that keeps reassessing the environment.
     - API integrity/inline-hook heuristics and light tamper probes; human-interaction entropy sampling; randomized yet precise timing jitter to throw off debuggers
-    - adds controlled noise (junk calcs + jittered delays) and spreads logic across multiple signals, reducing single-indicator detection.
-
-- API Resolution via Export Hashing :
-    - Avoids static imports by resolving function addresses at runtime.
-    - Walks IMAGE_EXPORT_DIRECTORY and applies custom xor rotate hash algo.
-    - APIs are initially attempted to be resolved via tprtdll.dll, which is quite the modern technique, it does so using GetModuleHandleW(L"tprtdll.dll") with DONT_RESOLVE_DLL_REFERENCES to minimize operation footprint.
+    - Adds controlled noise (junk calcs + jittered delays) and spreads logic across multiple signals, reducing single-indicator detection.
   
 - Embedded payload is encrypted at rest, with key and nonce derived at runtime from entropy sources: PID, TID, QPC, memory load, CPU info (CPUID), tick count.
 - Preferred algo is ChaCha20, but in case of failure falls back to RC4, decryption occurs in place after the encrypted blob is copied into memory.
-
+- APIs are initially attempted to be resolved via tprtdll.dll, which is quite the modern technique, it does so using GetModuleHandleW(L"tprtdll.dll") with DONT_RESOLVE_DLL_REFERENCES to minimize operation footprint.
 - Uses high-entropy randomness (PID/TID/GetTickCount/__rdtsc and more) to vary scan starts, delays, and sizes—reducing deterministic patterns and signature matches to cripple static.
   
 - Searches for (RX/RWX/RW, non-guarded) and guards behind additional is_region_safe() heuristic, and does the following :
