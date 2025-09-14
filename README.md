@@ -42,13 +42,10 @@ KittyLoader is a highly evasive loader written in C / Assembly.
     - InMemoryOrderModuleList
       
 - Deploys a wide variety of anti-analysis techniques, including :
-    - Debugger Detection :
-          - IsDebuggerPresent, CheckRemoteDebuggerPresent, PEB Interrogation, hardware breakpoints, timing checks (RDTSC + Sleep) using             __rdtsc timing analysis
-    - Sandbox Detection :
-          - Heuristic evaluation of sandbox probability from > GetSystemInfo, GlobalMemoryStatusEx, GetDiskFreeSpaceEx, GetTickCount
-    - Self-Integrity checks by continously calculating checksum of its own code section to detect tampering.
-    - Delayed Execution :
-          - Sleeps for 30–40 seconds plus jitter based on PID and system tick count.
+    - multilayer scoring (debugger, sandbox/resources, API integrity/hook checks, human-input entropy, contextual cues like domain/time of day) combined into a weighted overall confidence that continuously re-evaluates-
+    - picks an operational state (full → halted) and throttles/pauses with jittered, CPU-cycle-based delays in a loop that keeps reassessing the environment.
+    - API integrity/inline-hook heuristics and light tamper probes; human-interaction entropy sampling; randomized yet precise timing jitter to throw off debuggers
+    - adds controlled noise (junk calcs + jittered delays) and spreads logic across multiple signals, reducing single-indicator detection.
 
 - API Resolution via Export Hashing :
     - Avoids static imports by resolving function addresses at runtime.
