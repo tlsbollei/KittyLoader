@@ -42,7 +42,7 @@ KittyLoader is a highly evasive loader written in C / Assembly.
     - InMemoryOrderModuleList
       
 - Deploys a wide variety of anti-analysis techniques, including :
-    - multilayer scoring (debugger, sandbox/resources, API integrity/hook checks, human-input entropy, contextual cues like domain/time of day) combined into a weighted overall confidence that continuously re-evaluates-
+    - multilayer scoring (debugger, sandbox/resources, API integrity/hook checks, human-input entropy, contextual cues like domain/time of day) combined into a weighted overall confidence that continuously re-evaluates
     - picks an operational state (full → halted) and throttles/pauses with jittered, CPU-cycle-based delays in a loop that keeps reassessing the environment.
     - API integrity/inline-hook heuristics and light tamper probes; human-interaction entropy sampling; randomized yet precise timing jitter to throw off debuggers
     - adds controlled noise (junk calcs + jittered delays) and spreads logic across multiple signals, reducing single-indicator detection.
