@@ -1,9 +1,9 @@
 .code
 
-public hijack_entry_point
-public initialize_early_execution
+public jumpstart
+public startup
 
-hijack_entry_point proc
+jumpstart proc
     push rax
     push rcx
     push rdx
@@ -12,7 +12,7 @@ hijack_entry_point proc
     push r10
     push r11
     
-    call initialize_early_execution
+    call startup
     
     pop r11
     pop r10
@@ -25,28 +25,27 @@ hijack_entry_point proc
     mov rsp, rbp
     pop rbp
     ret
-hijack_entry_point endp
+jumpstart endp
 
-initialize_early_execution proc
-  
+startup proc
     push rbx
-    mov rbx, gs:[60h]      ; PEB
-    movzx eax, byte ptr [rbx+2] ; BeingDebugged
+    mov rbx, gs:[60h]
+    movzx eax, byte ptr [rbx+2]
     test al, al
-    jnz debugger_detected
+    jnz gotcaught
     
     mov eax, dword ptr [rbx+68h]
     and eax, 70h
     test eax, eax
-    jnz debugger_detected
+    jnz gotcaught
     
     pop rbx
     ret
     
-debugger_detected:
+gotcaught:
     mov ecx, 0
     call ExitProcess
     
-initialize_early_execution endp
+startup endp
 
 end
