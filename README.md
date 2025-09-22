@@ -30,7 +30,11 @@
 By proceeding, you agree to use this information responsibly and legally.
 
 
-### About
+### About> 
+> [!NOTE]
+> Yes, I am aware of all of the compilation hazards. Kitty was released as a source PoC, but due to recent complaints, Kitty will be soon uploaded operationalized.
+
+
 KittyLoader is a highly evasive loader written in C / Assembly.
 
 ### Features
